@@ -5,11 +5,11 @@
 // from a seeded random stream, so a run — and a staged screenshot — always plays the same.
 
 import {
-  CAR_CLASSES, CITY, PEDS, PLAYER, POLICE, PRICES, TRAFFIC, WANTED,
+  CAR_CLASSES, CITY, PEDS, PLAYER, POLICE, PRICES, TAXI, TRAFFIC, WANTED,
   hRoadY, vRoadX,
 } from './config.js';
-import { buildCity, buildingAt, collideBuildings, inWater, onRoad, onSand, randomRoadPoint, sidewalkPoint } from './city.js';
-import { createRandom, pick, randInt, range } from './random.js';
+import { buildCity, buildingAt, collideBuildings, inWater, nearbySidewalkPoint, onRoad, onSand, randomRoadPoint, sidewalkPoint } from './city.js';
+import { chance, createRandom, pick, randInt, range } from './random.js';
 
 let nextId = 1;
 const id = () => { const v = nextId; nextId += 1; return v; };
@@ -67,6 +67,8 @@ export function createWorld(seed) {
     missionIndex: 0,
     mission: null,       // { def, step, timer } while a mission runs
     courier: null,       // { phase, x, y, label } for the repeatable job
+    taxi: null,          // { phase, ped, x, y, to, label, fare, timer } for the cab fares
+    taxiCd: 8,           // seconds until the next passenger hails, while driving a taxi
     storyDone: false,
     phase: 'play',       // play | busted | wasted | ending
     phaseT: 0,
@@ -76,7 +78,7 @@ export function createWorld(seed) {
     nearAction: null,    // { label } what E would do right now
     events: [],          // sound cues for the caller: 'shoot', 'cash', ...
     camera: { x: 0, y: 0 },
-    stats: { earned: 0, stolen: 0, topSpeed: 0 },
+    stats: { earned: 0, stolen: 0, topSpeed: 0, fares: 0 },
     comet: null,
     vera: null,
   };
@@ -126,7 +128,10 @@ export function createWorld(seed) {
         : { x: s, y: hRoadY(roadIdx) + (dir > 0 ? CITY.lane : -CITY.lane) };
       if (!initial && Math.hypot(lane.x - world.player.x, lane.y - world.player.y) < TRAFFIC.spawnGap) continue;
       if (world.cars.some((c) => Math.hypot(c.x - lane.x, c.y - lane.y) < 60)) continue;
-      const cls = pick(random, ['sedan', 'sedan', 'coupe', 'taxi', 'van']);
+      // The streets carry the whole fleet now: muscle cars and Hauler trucks in the
+      // mix, and a rare Vapor supercar flashing through traffic.
+      const cls = chance(random, 0.04) ? 'super'
+        : pick(random, ['sedan', 'sedan', 'sedan', 'coupe', 'coupe', 'taxi', 'taxi', 'van', 'muscle', 'truck']);
       const car = spawnCar(cls, pick(random, ['#d94f3d', '#3d7bd9', '#f2f2f2', '#2b2f36', '#f2b23d', '#57b26a', '#9b59c9', '#e8e0d0', '#4fb3bf', '#c94f7c']), lane.x, lane.y, 0, 'traffic');
       if (cls === 'taxi') car.color = '#f2b23d';
       car.roadType = vertical ? 'v' : 'h';
@@ -148,7 +153,7 @@ export function createWorld(seed) {
       if (Math.abs((y % CITY.pitch)) < 90) continue; // keep intersections clear
       const side = random() < 0.5 ? -1 : 1;
       const x = vRoadX(i) + side * (CITY.roadW / 2 + 9); // in the parking bay, clear of the lanes
-      const cls = pick(random, ['sedan', 'coupe', 'sedan', 'van']);
+      const cls = chance(random, 0.06) ? 'super' : pick(random, ['sedan', 'coupe', 'sedan', 'van', 'muscle', 'truck']);
       spawnCar(cls, pick(random, ['#d94f3d', '#3d7bd9', '#f2f2f2', '#2b2f36', '#57b26a', '#e8e0d0']), x, y, side > 0 ? Math.PI : 0, 'parked')
         .angle = random() < 0.5 ? -Math.PI / 2 : Math.PI / 2;
     }
@@ -193,12 +198,14 @@ export function createWorld(seed) {
     world.crimeCd = 0;
     world.mission = null;
     world.courier = null;
+    world.taxi = null;
+    world.taxiCd = 8;
     world.phase = 'play';
     world.phaseT = 0;
     world.bust = 0;
     world.banner = null;
     world.objective = null;
-    world.stats = { earned: 0, stolen: 0, topSpeed: 0 };
+    world.stats = { earned: 0, stolen: 0, topSpeed: 0, fares: 0 };
     world.missionIndex = save && Number.isInteger(save.missionIndex) ? Math.min(save.missionIndex, MISSIONS.length) : 0;
     world.storyDone = world.missionIndex >= MISSIONS.length;
     const garage = city.landmarks.garage.door;
@@ -254,6 +261,111 @@ export function createWorld(seed) {
     banner('Courier Job', world.courier.label + '. Pays on delivery.', 4.5);
   }
 
+  // ------------------------------------------------------------- taxi fares
+
+  function spawnHail() {
+    const p = world.player;
+    let spot;
+    // A third of fares start at the taxi stand outside The Palms Hotel, when it is
+    // in range; the rest hail from a sidewalk near the cab.
+    if (chance(random, 0.3) && Math.hypot(city.taxiStand.x - p.x, city.taxiStand.y - p.y) < TAXI.hailRange) {
+      spot = { x: city.taxiStand.x + range(random, -30, 30), y: city.taxiStand.y + range(random, -10, 30) };
+    } else {
+      spot = nearbySidewalkPoint(random, p.x, p.y, TAXI.hailRange);
+    }
+    const ped = spawnPed(spot.x, spot.y);
+    ped.state = 'hail';
+    ped.t = TAXI.hailPatience;
+    world.taxi = { phase: 'hail', ped, x: spot.x, y: spot.y, to: null, label: 'Taxi fare: pick up the passenger', fare: 0, timer: null };
+    emit('taxi');
+  }
+
+  function releasePassenger(ped, how) {
+    ped.follow = false;
+    if (how === 'flee') {
+      ped.state = 'flee';
+      ped.t = 2.5;
+      ped.tx = ped.x;
+      ped.ty = ped.y;
+    } else {
+      ped.state = 'walk';
+      ped.t = 0;
+    }
+  }
+
+  function endFare() {
+    world.taxi = null;
+    world.taxiCd = TAXI.hailCooldown;
+  }
+
+  function updateTaxi(dt) {
+    const p = world.player;
+    const inTaxi = Boolean(p.car && p.car.cls === 'taxi' && !p.car.wrecked);
+    const t = world.taxi;
+    if (!t) {
+      if (!inTaxi) return;
+      world.taxiCd -= dt;
+      if (world.taxiCd <= 0) spawnHail();
+      return;
+    }
+    if (t.phase === 'hail') {
+      if (t.ped.state !== 'hail') { endFare(); return; } // knocked down or scared off
+      t.ped.t -= dt;
+      if (t.ped.t <= 0) {
+        releasePassenger(t.ped, 'walk'); // gave up waiting at the kerb
+        endFare();
+        return;
+      }
+      if (inTaxi && Math.hypot(p.car.x - t.x, p.car.y - t.y) < TAXI.pickupRadius) {
+        // The passenger boards; pick a destination a real drive away.
+        const keys = Object.keys(city.landmarks);
+        let dest = 'marina';
+        for (let tries = 0; tries < 6; tries += 1) {
+          const cand = pick(random, keys);
+          if (Math.hypot(city.landmarks[cand].door.x - t.x, city.landmarks[cand].door.y - t.y) > 420) { dest = cand; break; }
+        }
+        const door = city.landmarks[dest].door;
+        const d = Math.hypot(door.x - t.x, door.y - t.y);
+        t.phase = 'ride';
+        t.to = dest;
+        t.x = door.x;
+        t.y = door.y;
+        t.fare = TAXI.fareBase + Math.round((d / 10) * TAXI.farePerMetre);
+        t.timer = TAXI.timeBase + (d / 10) * TAXI.timePerMetre;
+        t.ped.follow = 'car';
+        t.label = `Taxi fare: ${city.landmarks[dest].name} — $${t.fare}`;
+        banner('Passenger Aboard', `${city.landmarks[dest].name} — beat the clock for $${t.fare}.`, 3.5);
+        emit('pickup');
+      }
+      return;
+    }
+    // Phase 'ride': the clock is running and the passenger is in the back seat.
+    if (!inTaxi || t.ped.state === 'down') {
+      if (t.ped.state !== 'down') releasePassenger(t.ped, 'flee');
+      banner('Fare Lost', 'The passenger walked off.', 3);
+      endFare();
+      return;
+    }
+    t.timer -= dt;
+    if (t.timer <= 0) {
+      releasePassenger(t.ped, 'flee');
+      banner('Fare Lost', 'Out of time — the passenger got out and walked.', 3.5);
+      emit('fail');
+      endFare();
+      return;
+    }
+    if (Math.hypot(p.car.x - t.x, p.car.y - t.y) < TAXI.dropoffRadius) {
+      p.money += t.fare;
+      world.stats.earned += t.fare;
+      world.stats.fares += 1;
+      releasePassenger(t.ped, 'walk');
+      banner('Fare Complete', `$${t.fare} paid. Another passenger is out there.`, 3.5);
+      emit('fare');
+      emit('cash');
+      endFare();
+    }
+  }
+
   function missionFailed(why) {
     if (!world.mission) return;
     banner('Mission Failed', why, 4);
@@ -283,8 +395,11 @@ export function createWorld(seed) {
   function runMissionStep(dt) {
     const m = world.mission;
     if (!m) {
-      // No story mission: the garage offers the next one; after the story, courier work.
-      if (!world.storyDone) {
+      // No story mission: a live fare is time-sensitive, so it outranks the garage
+      // and the courier; after the story, courier work is the standing offer.
+      if (world.taxi) {
+        world.objective = { x: world.taxi.x, y: world.taxi.y, label: world.taxi.label };
+      } else if (!world.storyDone) {
         const g = city.landmarks.garage.door;
         world.objective = { x: g.x, y: g.y, label: `${MISSIONS[world.missionIndex].name} — see Vera` };
       } else if (world.courier) {
@@ -498,6 +613,9 @@ export function createWorld(seed) {
       const bs = city.landmarks.bodyshop.door;
       if (Math.hypot(p.car.x - bs.x, p.car.y - bs.y) < 62 && p.car.health < CAR_CLASSES[p.car.cls].health && p.money >= PRICES.repair) {
         world.nearAction = `E — Repair car, $${PRICES.repair}`;
+      } else if (p.car.cls === 'taxi' && world.taxi && world.taxi.phase === 'hail'
+        && Math.hypot(p.car.x - world.taxi.x, p.car.y - world.taxi.y) < 130) {
+        world.nearAction = 'Passenger hailing — pull up close';
       } else world.nearAction = 'E — Get out';
       return;
     }
@@ -843,6 +961,7 @@ export function createWorld(seed) {
         ped.y = anchor.y;
         continue;
       }
+      if (ped.state === 'hail') continue; // a hailing passenger stands at the kerb and waves
       if (ped.state === 'down') {
         ped.downT -= dt;
         if (ped.downT <= 0) { ped.state = 'walk'; ped.t = 0; }
@@ -991,6 +1110,13 @@ export function createWorld(seed) {
   function respawn() {
     const p = world.player;
     if (p.car) { p.car.kind = 'parked'; p.car.speed = 0; p.car = null; }
+    // A bust or a hospital stay ends any fare: the passenger gets out where the
+    // ride stopped and walks off, instead of haunting the player's next life.
+    if (world.taxi) {
+      if (world.taxi.ped.state !== 'down') releasePassenger(world.taxi.ped, 'walk');
+      world.taxi = null;
+      world.taxiCd = TAXI.hailCooldown;
+    }
     if (world.phase === 'busted') {
       p.money -= Math.max(25, Math.floor(p.money * 0.12));
       const door = city.landmarks.police.door;
@@ -1035,6 +1161,7 @@ export function createWorld(seed) {
     }
     if (ctrl.interact) world.tryInteract();
     if (world.courier && !world.mission) runCourier();
+    updateTaxi(dt);
     runMissionStep(dt);
     updatePlayer(dt, ctrl);
     if (world.phase !== 'play') return; // busted or wasted mid-step

@@ -20,12 +20,39 @@ export function stageShot(world, name) {
     return;
   }
   if (name === 'foot') {
-    // On foot downtown, mid-afternoon, crowds and traffic flowing past.
+    // On foot downtown, mid-afternoon: a taxi waits at the kerb with a passenger
+    // hailing it, a Hauler truck rolling past, crowds and traffic flowing.
     world.player.x = vRoadX(2) + 74;
     world.player.y = hRoadY(2) + 64; // the sidewalk corner, clear of the lanes
     world.player.angle = 0.35;
     world.clock = 15 * 60 + 20;
     world.player.money = 85;
+    // The cab at the kerb: the nearest parked car becomes a taxi, and the nearest
+    // pedestrian becomes its hailing passenger, so the shot shows the fare system.
+    const cab = world.cars.find((c) => c.kind === 'parked');
+    if (cab) {
+      cab.cls = 'taxi';
+      cab.color = '#f2b23d';
+      cab.x = vRoadX(2) + 40;
+      cab.y = hRoadY(2) + 27;
+      cab.angle = 0;
+    }
+    const hailer = world.peds[0];
+    if (hailer) {
+      hailer.x = vRoadX(2) + 74;
+      hailer.y = hRoadY(2) + 92;
+      hailer.state = 'hail';
+      hailer.t = 45;
+      world.taxi = { phase: 'hail', ped: hailer, x: hailer.x, y: hailer.y, to: null, label: 'Taxi fare: pick up the passenger', fare: 0, timer: null };
+    }
+    // One of the passing cars is a Hauler, so the new metal is in frame too.
+    const truck = world.cars.find((c) => c.kind === 'traffic');
+    if (truck) {
+      truck.cls = 'truck';
+      truck.color = '#8a7f70';
+      truck.x = vRoadX(1) + 120;
+      truck.y = hRoadY(2) - 27;
+    }
     return;
   }
   if (name === 'chase') {
@@ -50,7 +77,6 @@ export function stageShot(world, name) {
     world.player.weapon = 'pistol';
     world.player.ammo = 24;
     world.wanted = 3;
-    world.heat = 42;
     world.clock = 17 * 60 + 5;
     return;
   }

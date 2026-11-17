@@ -255,6 +255,26 @@ function drawCar(ctx, world, car) {
     ctx.textAlign = 'center';
     ctx.fillText('TAXI', 0, 2.5);
   }
+  if (car.cls === 'truck') {
+    // A Hauler's cargo bed: slatted and darker than the paint, behind the cab.
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.fillRect(-L / 2 + 2, -W / 2 + 3, L * 0.42, W - 6);
+    ctx.fillStyle = 'rgba(255,255,255,0.14)';
+    for (let s = 0; s < 3; s += 1) ctx.fillRect(-L / 2 + 6 + s * 9, -W / 2 + 4, 2, W - 8);
+  }
+  if (car.cls === 'muscle') {
+    // A Stallion's racing stripe and hood scoop: it is that kind of car.
+    ctx.fillStyle = 'rgba(20, 20, 24, 0.55)';
+    ctx.fillRect(-L / 2 + 2, -3, L - 4, 6);
+    ctx.fillStyle = 'rgba(20, 20, 24, 0.7)';
+    rr(ctx, L * 0.18, -5, 10, 10, 2);
+    ctx.fill();
+  }
+  if (car.cls === 'super') {
+    // A Vapor's low rear spoiler, over a sleeker cabin.
+    ctx.fillStyle = '#15161a';
+    ctx.fillRect(-L / 2 - 1, -W / 2 - 1, 4, W + 2);
+  }
   if (car.cls === 'police') {
     ctx.fillStyle = PALETTE.copBlue;
     ctx.fillRect(-L * 0.05, -W / 2, L * 0.16, W);
@@ -324,6 +344,21 @@ function drawPed(ctx, world, ped) {
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.arc(ped.x, ped.y, 12 + Math.sin(world.time * 4) * 1.5, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  if (ped.state === 'hail') {
+    // A hailing passenger waves from the kerb, ringed in taxi yellow.
+    ctx.strokeStyle = ped.color;
+    ctx.lineWidth = 2.5;
+    const wave = Math.sin(world.time * 7) * 0.35;
+    ctx.beginPath();
+    ctx.moveTo(ped.x, ped.y - 4);
+    ctx.lineTo(ped.x + 7, ped.y - 13 + wave * 6);
+    ctx.stroke();
+    ctx.strokeStyle = PALETTE.taxiYellow;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(ped.x, ped.y, 13 + Math.sin(world.time * 4) * 1.5, 0, Math.PI * 2);
     ctx.stroke();
   }
 }
@@ -501,6 +536,9 @@ function drawMinimap(ctx, world) {
     ctx.arc(x0 + car.x * sx, y0 + car.y * sy, 3.2, 0, Math.PI * 2);
     ctx.fill();
   }
+  // The taxi stand outside The Palms Hotel.
+  ctx.fillStyle = PALETTE.taxiYellow;
+  ctx.fillRect(x0 + world.city.taxiStand.x * sx - 2, y0 + world.city.taxiStand.y * sy - 2, 4, 4);
   // The objective.
   if (world.objective) {
     const o = world.objective;
@@ -621,6 +659,10 @@ function drawHUD(ctx, world, ui) {
       const t = Math.max(0, Math.ceil(world.mission.timer));
       label += ` · ${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
     }
+    if (!world.mission && world.taxi && world.taxi.timer !== null && world.taxi.timer !== undefined) {
+      const t = Math.max(0, Math.ceil(world.taxi.timer));
+      label += ` · ${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+    }
     ctx.font = '700 15px ' + FONT;
     const w = ctx.measureText(label).width + 30;
     panel(ctx, VIEW.width / 2 - w / 2, VIEW.height - 52, w, 34);
@@ -683,15 +725,15 @@ function drawTitle(ctx, world, ui) {
   });
   ctx.font = '500 14.5px ' + FONT;
   ctx.fillStyle = 'rgba(253,253,248,0.75)';
-  ctx.fillText('WASD drive & walk · E get in / talk · mouse aim, click to fight · Shift run / handbrake · P pause', 68, VIEW.height - 30);
+  ctx.fillText('WASD drive & walk · E get in / talk · mouse aim, click to fight · Shift run / handbrake · P pause · drive a taxi for fares', 68, VIEW.height - 30);
 }
 
 function drawHow(ctx) {
-  panel(ctx, VIEW.width / 2 - 350, 90, 700, 520);
+  panel(ctx, VIEW.width / 2 - 350, 70, 700, 560);
   ctx.textAlign = 'center';
   ctx.fillStyle = PALETTE.gold;
   ctx.font = '800 30px ' + FONT;
-  ctx.fillText('HOW TO PLAY', VIEW.width / 2, 142);
+  ctx.fillText('HOW TO PLAY', VIEW.width / 2, 118);
   ctx.textAlign = 'left';
   ctx.fillStyle = PALETTE.text;
   ctx.font = '600 16.5px ' + FONT;
@@ -703,6 +745,10 @@ function drawHow(ctx) {
     'E — get in a car, talk, use a place   Mouse — aim · Click / J — fight',
     'H — horn · P — pause · M — mute',
     '',
+    'Driving a taxi? Passengers hail from the kerb — pull up, beat the',
+    'clock to their stop, and the fare is yours. The stand is at The',
+    'Palms Hotel; the streets run Stallions, Haulers and Vapors too.',
+    '',
     'Crime raises your wanted stars. Police answer every star: they',
     'chase, ram, and bust you if they corner you on foot. Lose them',
     'by breaking away until the stars fade.',
@@ -711,11 +757,11 @@ function drawHow(ctx) {
     'Body, and ammo at Bay Armory. A pistol waits behind the Armory.',
     'Your progress saves itself after every job.',
   ];
-  lines.forEach((line, i) => ctx.fillText(line, VIEW.width / 2 - 310, 186 + i * 27));
+  lines.forEach((line, i) => ctx.fillText(line, VIEW.width / 2 - 310, 160 + i * 26));
   ctx.textAlign = 'center';
   ctx.fillStyle = 'rgba(253,253,248,0.7)';
   ctx.font = '600 15px ' + FONT;
-  ctx.fillText('Enter — back', VIEW.width / 2, 578);
+  ctx.fillText('Enter — back', VIEW.width / 2, 612);
 }
 
 function drawCentreWord(ctx, word, color, sub) {
@@ -764,7 +810,7 @@ export function render(ctx, world, screen, ui = {}) {
     ctx.fillStyle = '#fdfdf8';
     ctx.font = '600 20px ' + FONT;
     ctx.fillText(`Vera made the boat. You made $${world.stats.earned.toLocaleString('en-US')} across the bay,`, VIEW.width / 2, 330);
-    ctx.fillText(`borrowed ${world.stats.stolen} cars, and the city knows your name now.`, VIEW.width / 2, 360);
+    ctx.fillText(`borrowed ${world.stats.stolen} cars, ran ${world.stats.fares} taxi fares, and the city knows your name now.`, VIEW.width / 2, 360);
     ctx.font = '600 16px ' + FONT;
     ctx.fillStyle = 'rgba(253,253,248,0.8)';
     ctx.fillText('Enter — keep roaming Coral Bay. Courier work waits at Vera\u2019s garage.', VIEW.width / 2, 428);

@@ -87,7 +87,10 @@ export function buildCity(seed) {
   const marinaY = blockRect(4, 3).y + 150;
   const pier = { x: CITY.waterX - 30, y: marinaY - 16, w: 300, h: 32 };
 
-  return { buildings, trees, landmarks, pier, seed };
+  // The taxi stand outside The Palms Hotel: where fares often start their night.
+  const taxiStand = { x: landmarks.hotel.door.x, y: landmarks.hotel.door.y + 30 };
+
+  return { buildings, trees, landmarks, pier, taxiStand, seed };
 }
 
 /** Is the point on a road (either direction, including intersections)? */
@@ -158,4 +161,23 @@ export function sidewalkPoint(random, i, j) {
   if (side === 1) return { x: cell.x + inset + t * (cell.w - inset * 2), y: cell.y + cell.h - inset };
   if (side === 2) return { x: cell.x + inset, y: cell.y + inset + t * (cell.h - inset * 2) };
   return { x: cell.x + cell.w - inset, y: cell.y + inset + t * (cell.h - inset * 2) };
+}
+
+/**
+ * A sidewalk point near (x, y): pick a block cell whose centre is within radius and
+ * take its ring, falling back to the nearest cell when nothing is in range. Taxi
+ * hailers use it so a passenger is always waiting a short drive away, never across town.
+ */
+export function nearbySidewalkPoint(random, x, y, radius) {
+  for (let tries = 0; tries < 8; tries += 1) {
+    const i = randInt(random, CITY.vRoads - 1);
+    const j = randInt(random, CITY.hRoads - 1);
+    const cell = blockRect(i, j);
+    const cx = cell.x + cell.w / 2;
+    const cy = cell.y + cell.h / 2;
+    if (Math.hypot(cx - x, cy - y) < radius) return sidewalkPoint(random, i, j);
+  }
+  const i = Math.max(0, Math.min(CITY.vRoads - 2, Math.floor(x / CITY.pitch)));
+  const j = Math.max(0, Math.min(CITY.hRoads - 2, Math.floor(y / CITY.pitch)));
+  return sidewalkPoint(random, i, j);
 }

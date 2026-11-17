@@ -3,7 +3,9 @@
 // (game/index.html and its ES modules, no library and no network request). It is a top-down
 // open-world crime game set in Coral Bay, an original sun-soaked coastal city: a road grid
 // with traffic and pedestrians, cars to steal, a three-mission story for Vera of Vera's
-// Customs, a five-star wanted system with pursuing police, shops, pickups and a minimap HUD.
+// Customs, a five-star wanted system with pursuing police, shops, pickups and a minimap HUD,
+// plus taxi fares — passengers hail a cab, pay by the trip, and lose patience on a clock —
+// and three new rides (the Stallion muscle car, the Hauler truck, the Vapor supercar).
 //
 // This program hands the game in: it copies game/ and screenshots/ from beside this file to
 // /output and writes /output/dossier.json, the summary the judge reads, with the vendored

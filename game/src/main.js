@@ -3,7 +3,7 @@
 // and the wiring that turns simulation events into synthesised sound. The ?shot= mode stages
 // a scene for the entry's screenshots and signals readiness on document.body.dataset.
 
-import { STEP, VIEW } from './config.js';
+import { CAR_CLASSES, STEP, VIEW } from './config.js';
 import { createInput } from './input.js';
 import { createAudio } from './audio.js';
 import { createWorld } from './world.js';
@@ -67,6 +67,8 @@ function drainEvents() {
     else if (ev === 'pickup') audio.pickup();
     else if (ev === 'cash') audio.cash();
     else if (ev === 'horn') audio.horn();
+    else if (ev === 'taxi') audio.taxi();
+    else if (ev === 'fare') audio.fare();
     else if (ev === 'door') audio.door();
     else if (ev === 'missionStart') audio.missionStart();
     else if (ev === 'missionDone') { audio.missionDone(); persist(); }
@@ -166,7 +168,8 @@ function loop(now) {
 
   const p = world.player;
   audio.siren(screen === SCREEN_PLAY && world.wanted > 0);
-  audio.engine(p.car ? Math.abs(p.car.speed) / 460 : 0, Boolean(p.car));
+  // The engine note scales to the car being driven: a Hauler never sounds like a Vapor.
+  audio.engine(p.car ? Math.abs(p.car.speed) / CAR_CLASSES[p.car.cls].topSpeed : 0, Boolean(p.car));
   render(ctx, world, screen, { menu: menuItems(), menuSel, muted: audio.muted });
 }
 

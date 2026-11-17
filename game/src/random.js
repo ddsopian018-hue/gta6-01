@@ -26,3 +26,8 @@ export function pick(random, list) {
 export function range(random, min, max) {
   return min + random() * (max - min);
 }
+
+/** True with probability p (0 to 1): the seeded way to roll a weighted chance. */
+export function chance(random, p) {
+  return random() < p;
+}

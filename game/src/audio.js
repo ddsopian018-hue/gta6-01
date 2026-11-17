@@ -70,6 +70,10 @@ export function createAudio() {
     pickup() { tone(880, 1320, 0.09, 'sine', 0.22); },
     cash() { tone(1240, 1240, 0.06, 'square', 0.12); tone(1860, 1860, 0.09, 'square', 0.12, 0.06); },
     horn() { tone(370, 370, 0.28, 'square', 0.16); tone(466, 466, 0.28, 'square', 0.12); },
+    /** A passenger hails the cab: a bright two-tone ding from the kerb. */
+    taxi() { tone(880, 880, 0.09, 'sine', 0.22); tone(1174, 1174, 0.14, 'sine', 0.22, 0.1); },
+    /** The fare is paid: a little cash-register arpeggio. */
+    fare() { tone(1046, 1046, 0.07, 'square', 0.12); tone(1318, 1318, 0.07, 'square', 0.12, 0.07); tone(1568, 1568, 0.12, 'square', 0.12, 0.14); },
     door() { tone(140, 90, 0.08, 'triangle', 0.25); },
     missionStart() { tone(523, 523, 0.12, 'triangle', 0.22); tone(784, 784, 0.16, 'triangle', 0.22, 0.1); },
     missionDone() { tone(659, 659, 0.1, 'triangle', 0.22); tone(880, 880, 0.1, 'triangle', 0.22, 0.09); tone(1318, 1318, 0.22, 'triangle', 0.24, 0.18); },

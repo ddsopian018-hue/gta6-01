@@ -49,6 +49,25 @@ export const CAR_CLASSES = {
   van:    { length: 50, width: 24, topSpeed: 272, reverse: 95,  accel: 230, grip: 4.4, health: 170, label: 'Van' },
   taxi:   { length: 42, width: 21, topSpeed: 338, reverse: 110, accel: 310, grip: 5.2, health: 120, label: 'Taxi' },
   police: { length: 43, width: 21, topSpeed: 428, reverse: 130, accel: 420, grip: 6.0, health: 160, label: 'Interceptor' },
+  // New metal on the streets: a muscle car, a heavy truck and a supercar, each with
+  // its own feel — the truck is slow and nearly unkillable, the Vapor is the fastest
+  // thing in the bay and shatters if you look at it wrong.
+  muscle: { length: 44, width: 22, topSpeed: 398, reverse: 120, accel: 385, grip: 5.0, health: 135, label: 'Stallion' },
+  truck:  { length: 56, width: 26, topSpeed: 252, reverse: 90,  accel: 205, grip: 4.0, health: 230, label: 'Hauler' },
+  super:  { length: 45, width: 21, topSpeed: 482, reverse: 135, accel: 470, grip: 6.3, health: 90,  label: 'Vapor' },
+};
+
+/** Taxi fares: passengers hail a cab, pay by the trip, and lose patience on a clock. */
+export const TAXI = {
+  fareBase: 60,        // flat pickup fee, in dollars
+  farePerMetre: 1.1,   // dollars per 10 world pixels of trip
+  timeBase: 25,        // seconds of patience before the trip length is counted
+  timePerMetre: 0.55,  // extra seconds of patience per 10 world pixels of trip
+  hailPatience: 45,    // seconds a hailer waits at the kerb before giving up
+  hailCooldown: 14,    // seconds after a fare ends before the next hail
+  hailRange: 780,      // a hailer spawns this close to the player
+  pickupRadius: 52,    // how close the cab must pull up to take the passenger
+  dropoffRadius: 58,   // how close to the destination counts as arrived
 };
 
 export const TRAFFIC = { maxCars: 13, spawnGap: 620 };
@@ -97,6 +116,7 @@ export const PALETTE = {
   healthBack: 'rgba(10, 12, 14, 0.55)',
   gold: '#ffc93c',
   marker: '#ffd94d',
+  taxiYellow: '#f2b23d', // the cab's paint and the hailer's beacon
   copBlue: '#2f6fd0',
   copRed: '#ef4040',
 };

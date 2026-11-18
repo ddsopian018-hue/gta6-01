@@ -1,33 +1,42 @@
-// A small seeded random number generator (mulberry32). The same seed always builds the same
-// city and the same staged scenes, which is what makes the screenshots repeatable and the
-// simulation deterministic: the simulation itself never calls Math.random.
+// Deterministic randomness for Coral Bay Heat.
+//
+// Every random choice in the game flows through one seeded stream, so a
+// given seed always grows the same city and replays the same staged
+// screenshot scenes. The generator below is a counter-based hash mixer:
+// the state is a single 32-bit counter, each draw hashes the counter with
+// a splitmix-style finaliser, and the top bits become a float in [0, 1).
+// Nothing in the simulation is allowed to touch Math.random.
 
+/** Build a generator function from a numeric seed. Each call yields [0, 1). */
 export function createRandom(seed) {
-  let a = seed | 0;
-  return function random() {
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  let counter = (seed | 0) ^ 0x85ebca6b;
+  const nextFloat = () => {
+    counter = (counter + 0x9e3779b9) | 0;
+    let z = counter;
+    z = Math.imul(z ^ (z >>> 16), 0x21f0aaad);
+    z = Math.imul(z ^ (z >>> 15), 0x735a2d97);
+    z = z ^ (z >>> 15);
+    return (z >>> 0) / 4294967296;
   };
+  return nextFloat;
 }
 
-/** A random integer in [0, n). */
+/** Whole number in [0, n), drawn from the supplied stream. */
 export function randInt(random, n) {
-  return Math.floor(random() * n);
+  return (random() * n) | 0;
 }
 
-/** A random pick from a list. */
+/** One element of a list, chosen by the supplied stream. */
 export function pick(random, list) {
-  return list[Math.floor(random() * list.length)];
+  return list[(random() * list.length) | 0];
 }
 
-/** A random number in [min, max). */
+/** Float somewhere in [min, max). */
 export function range(random, min, max) {
-  return min + random() * (max - min);
+  return min + (max - min) * random();
 }
 
-/** True with probability p (0 to 1): the seeded way to roll a weighted chance. */
+/** Weighted coin flip: true roughly p of the time. */
 export function chance(random, p) {
   return random() < p;
 }

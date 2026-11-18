@@ -1,41 +1,51 @@
-// Keyboard and mouse input. Held keys and the pointer give continuous control (steering,
-// aiming); one-shot presses (interact, pause, confirm) are queued as bit flags and taken once
-// by the loop, so a press between two frames is never lost and never counted twice.
+// Reading the player: keyboard plus pointer.
 //
-// The loop reads three things off the object createInput returns:
-//   keys           — the set of held keys by short name ('w', 'arrowup', 'shift', ...),
-//                    so menus can react to a press and delete it once handled;
-//   axis()         — the movement axes from the held keys, as { x, y };
-//   consumePressed(mask) — the ACTION_* flags pressed since the last call for just those
-//                    bits, so taking the horn never eats a queued interact or pause.
+// Two kinds of input live here. Held controls (drive, walk, run, punch)
+// are polled every frame through plain booleans and an axis helper.
+// One-shot commands (interact, pause, confirm, horn, mute) accumulate as
+// bits in a small queue; the game loop consumes exactly the bits it cares
+// about, so a horn tap can never swallow a queued pause.
+//
+// The object handed back to the game exposes:
+//   held               — per-action booleans for continuous controls
+//   keys               — short names of keys currently down ('w', 'j', …);
+//                        menus delete a name once they have reacted to it
+//   mouse              — pointer position in view coordinates, plus down
+//   axis()             — { x, y } movement from the held direction keys
+//   consumePressed(m)  — queued ACTION_* bits matching mask m, cleared
+//   takeActions()      — every queued ACTION_* bit, cleared
 
-export const ACTION_INTERACT = 1;  // E or F: get in or out of a car, talk, use a marker
-export const ACTION_PAUSE = 2;     // P or Escape
-export const ACTION_CONFIRM = 4;   // Enter or Space: start, restart, continue
-export const ACTION_HORN = 8;      // H
-export const ACTION_MUTE = 16;     // M
+export const ACTION_INTERACT = 1;
+export const ACTION_PAUSE = 2;
+export const ACTION_CONFIRM = 4;
+export const ACTION_HORN = 8;
+export const ACTION_MUTE = 16;
 
-const HELD = {
-  up: new Set(['ArrowUp', 'KeyW']),
-  down: new Set(['ArrowDown', 'KeyS']),
-  left: new Set(['ArrowLeft', 'KeyA']),
-  right: new Set(['ArrowRight', 'KeyD']),
-  run: new Set(['ShiftLeft', 'ShiftRight']),
-  attack: new Set(['KeyJ']),
-};
-const ONESHOT = new Map([
+// [physical code, held-action name] pairs for the continuous controls.
+const HELD_BINDINGS = [
+  ['ArrowUp', 'up'], ['KeyW', 'up'],
+  ['ArrowDown', 'down'], ['KeyS', 'down'],
+  ['ArrowLeft', 'left'], ['KeyA', 'left'],
+  ['ArrowRight', 'right'], ['KeyD', 'right'],
+  ['ShiftLeft', 'run'], ['ShiftRight', 'run'],
+  ['KeyJ', 'attack'],
+];
+
+// [physical code, action bit] pairs for the one-shot commands.
+const TAP_BINDINGS = [
   ['KeyE', ACTION_INTERACT], ['KeyF', ACTION_INTERACT],
   ['KeyP', ACTION_PAUSE], ['Escape', ACTION_PAUSE],
   ['Enter', ACTION_CONFIRM], ['Space', ACTION_CONFIRM],
   ['KeyH', ACTION_HORN], ['KeyM', ACTION_MUTE],
-]);
-const ALL_HELD = new Set(Object.values(HELD).flatMap((set) => [...set]));
+];
 
-/** Short names the loop uses: 'w', 'arrowup', 'shift', 'j', ... */
-function keyName(code) {
+const heldActionFor = new Map(HELD_BINDINGS);
+const tapActionFor = new Map(TAP_BINDINGS);
+
+/** Compact display name for a key code: 'w', 'arrowup', 'shift', … */
+function shortName(code) {
   if (code === 'ShiftLeft' || code === 'ShiftRight') return 'shift';
   if (code.startsWith('Key')) return code.slice(3).toLowerCase();
-  if (code.startsWith('Arrow')) return code.toLowerCase();
   return code.toLowerCase();
 }
 
@@ -43,50 +53,58 @@ export function createInput(canvas) {
   const held = { up: false, down: false, left: false, right: false, run: false, attack: false };
   const keys = new Set();
   const mouse = { x: 0, y: 0, down: false };
-  let actions = 0;
+  let queuedBits = 0;
 
-  function setHeld(code, value) {
-    for (const name of Object.keys(HELD)) {
-      if (HELD[name].has(code)) held[name] = value;
-    }
-  }
+  // Recompute held flags from the live key set, so releasing one of two
+  // keys bound to the same action (W and ArrowUp, say) keeps it held.
+  const refreshHeld = () => {
+    held.up = keys.has('w') || keys.has('arrowup');
+    held.down = keys.has('s') || keys.has('arrowdown');
+    held.left = keys.has('a') || keys.has('arrowleft');
+    held.right = keys.has('d') || keys.has('arrowright');
+    held.run = keys.has('shift');
+    held.attack = keys.has('j');
+  };
 
   window.addEventListener('keydown', (event) => {
-    if (ALL_HELD.has(event.code)) {
-      setHeld(event.code, true);
-      // A held key repeats keydown: only the first press joins the set, so a menu
-      // that deletes the name after handling it does not see it again until re-pressed.
-      if (!event.repeat) keys.add(keyName(event.code));
+    if (heldActionFor.has(event.code)) {
+      if (!event.repeat) {
+        keys.add(shortName(event.code));
+        refreshHeld();
+      }
       event.preventDefault();
       return;
     }
-    const flag = ONESHOT.get(event.code);
-    if (flag !== undefined) {
-      if (!event.repeat) actions |= flag;
+    const bit = tapActionFor.get(event.code);
+    if (bit !== undefined) {
+      if (!event.repeat) queuedBits |= bit;
       event.preventDefault();
     }
   });
+
   window.addEventListener('keyup', (event) => {
-    if (ALL_HELD.has(event.code)) {
-      setHeld(event.code, false);
-      keys.delete(keyName(event.code));
+    if (heldActionFor.has(event.code)) {
+      keys.delete(shortName(event.code));
+      refreshHeld();
     }
   });
-  // A key released while the tab is hidden never sends keyup: let go of everything on blur.
+
+  // Losing focus mid-keypress would otherwise wedge a control on forever.
   window.addEventListener('blur', () => {
-    for (const name of Object.keys(held)) held[name] = false;
     keys.clear();
+    refreshHeld();
     mouse.down = false;
   });
+
   canvas.addEventListener('pointermove', (event) => {
-    const rect = canvas.getBoundingClientRect();
-    mouse.x = ((event.clientX - rect.left) / rect.width) * 1280;
-    mouse.y = ((event.clientY - rect.top) / rect.height) * 720;
+    const box = canvas.getBoundingClientRect();
+    mouse.x = ((event.clientX - box.left) / box.width) * 1280;
+    mouse.y = ((event.clientY - box.top) / box.height) * 720;
   });
   canvas.addEventListener('pointerdown', (event) => {
     if (event.button === 0) {
       mouse.down = true;
-      actions |= ACTION_CONFIRM; // a click also confirms menus
+      queuedBits |= ACTION_CONFIRM; // clicking a menu counts as confirming
     }
   });
   window.addEventListener('pointerup', (event) => {
@@ -97,23 +115,20 @@ export function createInput(canvas) {
     held,
     keys,
     mouse,
-    /** The movement axes from the held keys: x right, y down, each -1, 0 or 1. */
     axis() {
       return {
         x: (held.right ? 1 : 0) - (held.left ? 1 : 0),
         y: (held.down ? 1 : 0) - (held.up ? 1 : 0),
       };
     },
-    /** The ACTION_* flags pressed since the last call, for just the masked bits. */
     consumePressed(mask) {
-      const taken = actions & mask;
-      actions &= ~mask;
+      const taken = queuedBits & mask;
+      queuedBits &= ~mask;
       return taken;
     },
-    /** Every one-shot press since the last call, as ACTION_* flags. */
     takeActions() {
-      const taken = actions;
-      actions = 0;
+      const taken = queuedBits;
+      queuedBits = 0;
       return taken;
     },
   };

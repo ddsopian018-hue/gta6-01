@@ -1,30 +1,35 @@
-// Coral Bay Heat: every tuning number, colour and city dimension in one place.
-// The view is a fixed 1280x720 logical area; the renderer scales it to the window and the
-// camera moves over a much larger city, so no rule below depends on the screen size.
+// Coral Bay Heat — the single tuning sheet.
+//
+// Screen size, the fixed simulation step, the street grid, vehicle
+// performance, prices and paint all live here so the rest of the code can
+// stay free of magic numbers. The world is much wider than the viewport:
+// the camera roams, the rules below never depend on pixels on screen.
 
 export const VIEW = { width: 1280, height: 720 };
 
-/** The simulation's fixed step, in seconds: 60 updates a second whatever the display's rate. */
+/** Seconds per simulation tick: the world always advances at 60 Hz. */
 export const STEP = 1 / 60;
 
-/** City geometry: a grid of roads and blocks, a sand beach, then the bay itself. */
+// Street layout. Roads and blocks alternate on a fixed pitch; east of the
+// last street the promenade gives way to sand and then open water.
 export const CITY = {
-  roadW: 112,          // width of every road, in world pixels
-  block: 248,          // block size between roads
-  pitch: 360,          // roadW + block: the grid pitch
-  vRoads: 6,           // vertical roads, west to east
-  hRoads: 5,           // horizontal roads, north to south
-  beachX: 1960,        // where the sand starts (east edge of the last road is 1912)
-  waterX: 2260,        // where the bay starts
-  width: 2680,         // world width: land, beach and a strip of water
-  height: 1700,        // world height
-  lane: 27,            // traffic lane offset from a road's centre line
+  roadW: 112,
+  block: 248,
+  pitch: 360,
+  vRoads: 6,
+  hRoads: 5,
+  beachX: 1960,
+  waterX: 2260,
+  width: 2680,
+  height: 1700,
+  lane: 27,
 };
 
-/** Centre line of vertical road i / horizontal road j. */
+/** X coordinate of the centre line of north–south street number i. */
 export const vRoadX = (i) => i * CITY.pitch + CITY.roadW / 2;
+/** Y coordinate of the centre line of east–west street number j. */
 export const hRoadY = (j) => j * CITY.pitch + CITY.roadW / 2;
-/** The block cell (i, j) as a rectangle: x, y of its top-left corner and its size. */
+/** Rectangle of the block between streets i..i+1 and j..j+1. */
 export const blockRect = (i, j) => ({
   x: i * CITY.pitch + CITY.roadW,
   y: j * CITY.pitch + CITY.roadW,
@@ -39,54 +44,60 @@ export const PLAYER = {
   health: 100,
   punchRange: 30,
   punchDamage: 34,
-  enterRange: 52,      // how close to a car door the player must be to get in
+  enterRange: 52,
 };
+
+// Vehicle catalogue. A small factory keeps the table honest: every class
+// carries its footprint, pace, acceleration, steering grip, hit points
+// and the badge name the HUD shows.
+function vehicle(length, width, topSpeed, reverse, accel, grip, health, label) {
+  return { length, width, topSpeed, reverse, accel, grip, health, label };
+}
 
 export const CAR_CLASSES = {
-  sedan:  { length: 42, width: 21, topSpeed: 330, reverse: 110, accel: 300, grip: 5.2, health: 120, label: 'Sedan' },
-  sport:  { length: 44, width: 21, topSpeed: 452, reverse: 130, accel: 430, grip: 5.8, health: 100, label: 'Comet' },
-  coupe:  { length: 41, width: 20, topSpeed: 368, reverse: 115, accel: 340, grip: 5.5, health: 110, label: 'Coupe' },
-  van:    { length: 50, width: 24, topSpeed: 272, reverse: 95,  accel: 230, grip: 4.4, health: 170, label: 'Van' },
-  taxi:   { length: 42, width: 21, topSpeed: 338, reverse: 110, accel: 310, grip: 5.2, health: 120, label: 'Taxi' },
-  police: { length: 43, width: 21, topSpeed: 428, reverse: 130, accel: 420, grip: 6.0, health: 160, label: 'Interceptor' },
-  // New metal on the streets: a muscle car, a heavy truck and a supercar, each with
-  // its own feel — the truck is slow and nearly unkillable, the Vapor is the fastest
-  // thing in the bay and shatters if you look at it wrong.
-  muscle: { length: 44, width: 22, topSpeed: 398, reverse: 120, accel: 385, grip: 5.0, health: 135, label: 'Stallion' },
-  truck:  { length: 56, width: 26, topSpeed: 252, reverse: 90,  accel: 205, grip: 4.0, health: 230, label: 'Hauler' },
-  super:  { length: 45, width: 21, topSpeed: 482, reverse: 135, accel: 470, grip: 6.3, health: 90,  label: 'Vapor' },
+  sedan: vehicle(42, 21, 330, 110, 300, 5.2, 120, 'Sedan'),
+  sport: vehicle(44, 21, 452, 130, 430, 5.8, 100, 'Comet'),
+  coupe: vehicle(41, 20, 368, 115, 340, 5.5, 110, 'Coupe'),
+  van: vehicle(50, 24, 272, 95, 230, 4.4, 170, 'Van'),
+  taxi: vehicle(42, 21, 338, 110, 310, 5.2, 120, 'Taxi'),
+  police: vehicle(43, 21, 428, 130, 420, 6.0, 160, 'Interceptor'),
+  muscle: vehicle(44, 22, 398, 120, 385, 5.0, 135, 'Stallion'),
+  truck: vehicle(56, 26, 252, 90, 205, 4.0, 230, 'Hauler'),
+  super: vehicle(45, 21, 482, 135, 470, 6.3, 90, 'Vapor'),
 };
 
-/** Taxi fares: passengers hail a cab, pay by the trip, and lose patience on a clock. */
+// Cab work: a flagfall plus a per-distance fare, against a patience
+// clock that scales with how far the passenger wants to go.
 export const TAXI = {
-  fareBase: 60,        // flat pickup fee, in dollars
-  farePerMetre: 1.1,   // dollars per 10 world pixels of trip
-  timeBase: 25,        // seconds of patience before the trip length is counted
-  timePerMetre: 0.55,  // extra seconds of patience per 10 world pixels of trip
-  hailPatience: 45,    // seconds a hailer waits at the kerb before giving up
-  hailCooldown: 14,    // seconds after a fare ends before the next hail
-  hailRange: 780,      // a hailer spawns this close to the player
-  pickupRadius: 52,    // how close the cab must pull up to take the passenger
-  dropoffRadius: 58,   // how close to the destination counts as arrived
+  fareBase: 60,
+  farePerMetre: 1.1,
+  timeBase: 25,
+  timePerMetre: 0.55,
+  hailPatience: 45,
+  hailCooldown: 14,
+  hailRange: 780,
+  pickupRadius: 52,
+  dropoffRadius: 58,
 };
 
 export const TRAFFIC = { maxCars: 13, spawnGap: 620 };
 export const PEDS = { max: 34 };
+
+// Police response, indexed by wanted stars: how many cruisers roll and
+// how hard each one is allowed to drive.
 export const POLICE = {
-  // How many interceptor cars answer each wanted level, and how fast they may drive.
   carsByStars: [0, 1, 2, 3, 4, 6],
   speedByStars: [0, 372, 396, 420, 442, 462],
   spawnDistance: 640,
   despawnDistance: 1500,
-  bustRadius: 52,      // a cop this close to a slow player on foot starts the bust
+  bustRadius: 52,
   bustSeconds: 1.6,
-  sightRange: 430,     // a cop this close counts as seeing the player for wanted decay
+  sightRange: 430,
 };
 
 export const WANTED = {
-  // Seconds with no cop seeing the player before one star falls off, per current star count.
   decaySeconds: [0, 9, 13, 18, 24, 30],
-  crimeCooldown: 1.2,  // one crime cannot raise the level twice inside this window
+  crimeCooldown: 1.2,
 };
 
 export const PRICES = { heal: 100, repair: 150, ammo: 50, ammoAmount: 24 };
@@ -116,12 +127,12 @@ export const PALETTE = {
   healthBack: 'rgba(10, 12, 14, 0.55)',
   gold: '#ffc93c',
   marker: '#ffd94d',
-  taxiYellow: '#f2b23d', // the cab's paint and the hailer's beacon
+  taxiYellow: '#f2b23d',
   copBlue: '#2f6fd0',
   copRed: '#ef4040',
 };
 
-/** Building roof colours: sun-bleached pastels, picked per building from the city seed. */
+/** Sun-faded pastel roofs, assigned per building while the city is built. */
 export const ROOF_COLORS = [
   '#f2e3c6', '#eec9a3', '#e8b4a0', '#d9e6ee', '#f6d8dc', '#cfe3cf',
   '#f3ead8', '#e5d1f0', '#ffe9a8', '#c8e6f2', '#f0c8a8', '#dfe8da',

@@ -1,28 +1,34 @@
-// Coral Bay Heat — boot and game loop. Owns the screens (title, how-to, pause, the busted
-// and wasted beats, the ending), the fixed-step simulation loop, the save in localStorage,
-// and the wiring that turns simulation events into synthesised sound. The ?shot= mode stages
-// a scene for the entry's screenshots and signals readiness on document.body.dataset.
+// Coral Bay Heat — the shell around the simulation.
+//
+// This module boots the canvas, owns the screen state machine (title,
+// how-to, play, pause, and the busted / wasted / ending beats), drives
+// the world at a fixed step from requestAnimationFrame, persists
+// progress to localStorage, and translates the world's sound cues into
+// calls on the synthesised audio engine. It also implements screenshot
+// mode: ?shot=<scene>&seed=<n> stages a scene, steps it with scripted
+// controls, and flags document.body.dataset.ready when the frame is
+// safe to capture.
 
-import { CAR_CLASSES, STEP, VIEW } from './config.js';
-import { createInput } from './input.js';
+import { CAR_CLASSES, SAVE_KEY, STEP, VIEW } from './config.js';
+import {
+  ACTION_CONFIRM, ACTION_HORN, ACTION_INTERACT, ACTION_MUTE, ACTION_PAUSE, createInput,
+} from './input.js';
 import { createAudio } from './audio.js';
 import { createWorld } from './world.js';
 import {
-  SCREEN_BUSTED, SCREEN_ENDING, SCREEN_HOW, SCREEN_PAUSE, SCREEN_PLAY, SCREEN_TITLE,
-  SCREEN_WASTED, render,
+  SCREEN_BUSTED, SCREEN_ENDING, SCREEN_HOW, SCREEN_PAUSE, SCREEN_PLAY,
+  SCREEN_TITLE, SCREEN_WASTED, render,
 } from './render.js';
 import { SHOT_STEPS, shotControl, stageShot } from './shots.js';
-
-const SAVE_KEY = 'coral-bay-heat.save.v1';
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 canvas.width = VIEW.width;
 canvas.height = VIEW.height;
 
-const params = new URLSearchParams(location.search);
-const shotName = params.get('shot');
-const shotSeed = Number(params.get('seed') || 1) || 1;
+const query = new URLSearchParams(location.search);
+const shotName = query.get('shot');
+const shotSeed = Number(query.get('seed') || 1) || 1;
 
 const world = createWorld(shotSeed);
 const input = createInput(canvas);
@@ -30,134 +36,172 @@ const audio = createAudio();
 
 let screen = SCREEN_TITLE;
 let menuSel = 0;
-let deathT = 0;
+let deathTimer = 0;
 
-function loadSave() {
+// ------------------------------------------------------------ save games
+
+function readSave() {
   try {
     const raw = localStorage.getItem(SAVE_KEY);
     return raw ? JSON.parse(raw) : null;
   } catch {
-    return null;
+    return null; // storage blocked: play without persistence
   }
 }
 
-function persist() {
+function writeSave() {
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(world.saveData()));
   } catch {
-    // Private mode and friends: the game simply will not persist.
+    // Same story: the session simply will not persist.
   }
 }
 
-function menuItems() {
-  return loadSave() ? ['CONTINUE', 'NEW GAME', 'HOW TO PLAY'] : ['NEW GAME', 'HOW TO PLAY'];
+// ------------------------------------------------------------ title menu
+
+function menuEntries() {
+  return readSave()
+    ? ['CONTINUE', 'NEW GAME', 'HOW TO PLAY']
+    : ['NEW GAME', 'HOW TO PLAY'];
 }
 
-function startGame(fresh) {
-  world.reset(fresh ? null : loadSave());
+function beginRun(fresh) {
+  world.reset(fresh ? null : readSave());
   screen = SCREEN_PLAY;
   audio.unlock();
 }
 
-function drainEvents() {
-  for (const ev of world.events) {
-    if (ev === 'shoot') audio.shoot();
-    else if (ev === 'punch') audio.punch();
-    else if (ev === 'hurt') audio.hurt();
-    else if (ev === 'pickup') audio.pickup();
-    else if (ev === 'cash') audio.cash();
-    else if (ev === 'horn') audio.horn();
-    else if (ev === 'taxi') audio.taxi();
-    else if (ev === 'fare') audio.fare();
-    else if (ev === 'door') audio.door();
-    else if (ev === 'missionStart') audio.missionStart();
-    else if (ev === 'missionDone') { audio.missionDone(); persist(); }
-    else if (ev === 'fail') audio.fail();
-    else if (ev === 'star') audio.star();
-    else if (ev.startsWith('crash')) audio.crash(Number(ev.slice(5)) || 1);
+// ------------------------------------------------------------ sound cues
+
+// The world speaks in cue names; a few carry a numeric suffix (crash1,
+// crash2, crash3) that becomes the impact strength for the audio engine.
+const CUE_HANDLERS = {
+  shoot: () => audio.shoot(),
+  punch: () => audio.punch(),
+  hurt: () => audio.hurt(),
+  pickup: () => audio.pickup(),
+  cash: () => audio.cash(),
+  horn: () => audio.horn(),
+  taxi: () => audio.taxi(),
+  fare: () => audio.fare(),
+  door: () => audio.door(),
+  missionStart: () => audio.missionStart(),
+  missionDone: () => { audio.missionDone(); writeSave(); },
+  fail: () => audio.fail(),
+  star: () => audio.star(),
+};
+
+function playCues() {
+  for (const cueName of world.events) {
+    if (cueName.startsWith('crash')) {
+      audio.crash(Number(cueName.slice(5)) || 1);
+    } else if (CUE_HANDLERS[cueName]) {
+      CUE_HANDLERS[cueName]();
+    }
   }
   world.events.length = 0;
 }
 
-function frameControl() {
-  const ax = input.axis();
+// ------------------------------------------------------------ controls
+
+/** Per-frame continuous control, sampled from the input device state. */
+function sampleControl() {
+  const axes = input.axis();
   const p = world.player;
-  const px = p.x - world.camera.x;
-  const py = p.y - world.camera.y;
+  const viewX = p.x - world.camera.x;
+  const viewY = p.y - world.camera.y;
   return {
-    mx: ax.x,
-    my: ax.y,
+    mx: axes.x,
+    my: axes.y,
     run: input.keys.has('shift'),
     attack: input.mouse.down || input.keys.has('j'),
-    aim: input.mouse.down ? Math.atan2(input.mouse.y - py, input.mouse.x - px) : null,
-    horn: (input.consumePressed(8) & 8) !== 0,
-    interact: false,
+    aim: input.mouse.down ? Math.atan2(input.mouse.y - viewY, input.mouse.x - viewX) : null,
+    horn: (input.consumePressed(ACTION_HORN) & ACTION_HORN) !== 0,
+    interact: false, // interact is edge-polled separately, below
   };
 }
 
-// Interact and pause are edge-triggered, so they are polled outside the control struct.
-function pollEdges() {
-  const pressed = input.consumePressed(1 | 2 | 4);
+/**
+ * Edge-triggered commands, handled once per frame outside the control
+ * struct so a single press can drive menus, pauses and interactions
+ * without ever being double-counted by the fixed-step loop.
+ */
+function handleEdges() {
+  const pressed = input.consumePressed(ACTION_INTERACT | ACTION_PAUSE | ACTION_CONFIRM);
+
   if (screen === SCREEN_PLAY) {
-    if (pressed & 2) { screen = SCREEN_PAUSE; return; }
-    if (pressed & 1) world.tryInteract();
+    if (pressed & ACTION_PAUSE) { screen = SCREEN_PAUSE; return; }
+    if (pressed & ACTION_INTERACT) world.tryInteract();
     return;
   }
   if (screen === SCREEN_PAUSE) {
-    if (pressed & (2 | 4)) screen = SCREEN_PLAY;
+    if (pressed & (ACTION_PAUSE | ACTION_CONFIRM)) screen = SCREEN_PLAY;
     return;
   }
   if (screen === SCREEN_TITLE) {
-    if (input.keys.has('arrowup') || input.keys.has('w')) { menuSel = Math.max(0, menuSel - 1); input.keys.delete('arrowup'); input.keys.delete('w'); }
-    if (input.keys.has('arrowdown') || input.keys.has('s')) { menuSel = Math.min(menuItems().length - 1, menuSel + 1); input.keys.delete('arrowdown'); input.keys.delete('s'); }
-    if (pressed & 4) {
-      const item = menuItems()[menuSel];
-      if (item === 'HOW TO PLAY') screen = SCREEN_HOW;
-      else startGame(item === 'NEW GAME');
+    const entries = menuEntries();
+    if (input.keys.has('arrowup') || input.keys.has('w')) {
+      menuSel = Math.max(0, menuSel - 1);
+      input.keys.delete('arrowup');
+      input.keys.delete('w');
+    }
+    if (input.keys.has('arrowdown') || input.keys.has('s')) {
+      menuSel = Math.min(entries.length - 1, menuSel + 1);
+      input.keys.delete('arrowdown');
+      input.keys.delete('s');
+    }
+    if (pressed & ACTION_CONFIRM) {
+      const chosen = entries[menuSel];
+      if (chosen === 'HOW TO PLAY') screen = SCREEN_HOW;
+      else beginRun(chosen === 'NEW GAME');
     }
     return;
   }
   if (screen === SCREEN_HOW) {
-    if (pressed & 4) screen = SCREEN_TITLE;
+    if (pressed & ACTION_CONFIRM) screen = SCREEN_TITLE;
     return;
   }
   if (screen === SCREEN_ENDING) {
-    if (pressed & 4) { screen = SCREEN_PLAY; world.phase = 'play'; }
+    if (pressed & ACTION_CONFIRM) {
+      screen = SCREEN_PLAY;
+      world.phase = 'play';
+    }
   }
 }
 
-let last = performance.now();
-let acc = 0;
+// ------------------------------------------------------------ main loop
 
-function loop(now) {
-  requestAnimationFrame(loop);
-  let dt = (now - last) / 1000;
-  last = now;
-  if (dt > 0.25) dt = 0.25;
-  acc += dt;
+let lastStamp = performance.now();
+let accumulator = 0;
 
-  if (input.consumePressed(16)) audio.toggleMute();
+function frame(now) {
+  requestAnimationFrame(frame);
+  let elapsed = (now - lastStamp) / 1000;
+  lastStamp = now;
+  if (elapsed > 0.25) elapsed = 0.25;
+  accumulator += elapsed;
 
-  if (screen === SCREEN_PLAY || screen === SCREEN_PAUSE) pollEdges();
-  else if (screen !== SCREEN_BUSTED && screen !== SCREEN_WASTED) pollEdges();
+  if (input.consumePressed(ACTION_MUTE)) audio.toggleMute();
+  handleEdges();
 
-  while (acc >= STEP) {
-    acc -= STEP;
+  while (accumulator >= STEP) {
+    accumulator -= STEP;
     if (screen === SCREEN_PLAY) {
-      world.step(STEP, frameControl());
-      drainEvents();
-      if (world.phase === 'busted') { screen = SCREEN_BUSTED; deathT = 2.6; persist(); }
-      else if (world.phase === 'wasted') { screen = SCREEN_WASTED; deathT = 2.6; persist(); }
-      else if (world.phase === 'ending') { screen = SCREEN_ENDING; persist(); }
+      world.step(STEP, sampleControl());
+      playCues();
+      if (world.phase === 'busted') { screen = SCREEN_BUSTED; deathTimer = 2.6; writeSave(); }
+      else if (world.phase === 'wasted') { screen = SCREEN_WASTED; deathTimer = 2.6; writeSave(); }
+      else if (world.phase === 'ending') { screen = SCREEN_ENDING; writeSave(); }
     } else if (screen === SCREEN_BUSTED || screen === SCREEN_WASTED) {
-      deathT -= STEP;
+      // The verdict screen lingers, then the world puts the player back.
+      deathTimer -= STEP;
       world.time += STEP;
-      if (deathT <= 0) {
+      if (deathTimer <= 0) {
         world.respawn(screen === SCREEN_BUSTED ? 'busted' : 'wasted');
         screen = SCREEN_PLAY;
       }
     } else {
-      // Title, how-to, pause, ending: the city idles behind the screen.
+      // Menus and pause: time passes, the city idles, nothing simulates.
       world.time += STEP;
       if (screen === SCREEN_TITLE) {
         world.camera.x = 1420 + Math.sin(world.time * 0.05) * 120;
@@ -168,34 +212,33 @@ function loop(now) {
 
   const p = world.player;
   audio.siren(screen === SCREEN_PLAY && world.wanted > 0);
-  // The engine note scales to the car being driven: a Hauler never sounds like a Vapor.
-  audio.engine(p.car ? Math.abs(p.car.speed) / CAR_CLASSES[p.car.cls].topSpeed : 0, Boolean(p.car));
-  render(ctx, world, screen, { menu: menuItems(), menuSel, muted: audio.muted });
+  const speedRatio = p.car ? Math.abs(p.car.speed) / CAR_CLASSES[p.car.cls].topSpeed : 0;
+  audio.engine(speedRatio, Boolean(p.car));
+  render(ctx, world, screen, { menu: menuEntries(), menuSel, muted: audio.muted });
 }
 
-// ------------------------------------------------------------- screenshot mode
+// ------------------------------------------------------------ entry modes
 
 if (shotName && SHOT_STEPS[shotName]) {
+  // Screenshot mode: stage, step the scripted scene, render once, signal.
   stageShot(world, shotName);
-  const total = SHOT_STEPS[shotName];
-  let stepped = 0;
-  const shotLoop = () => {
+  const totalSteps = SHOT_STEPS[shotName];
+  const captureFrame = () => {
     if (shotName === 'title') {
       render(ctx, world, SCREEN_TITLE, { menu: ['NEW GAME', 'HOW TO PLAY'], menuSel: 0, muted: false });
     } else {
-      while (stepped < total) {
-        world.step(STEP, shotControl(shotName, stepped));
+      for (let stepIndex = 0; stepIndex < totalSteps; stepIndex += 1) {
+        world.step(STEP, shotControl(shotName, stepIndex));
         world.events.length = 0;
-        stepped += 1;
       }
       render(ctx, world, SCREEN_PLAY, { muted: false });
     }
     document.body.dataset.ready = '1';
   };
-  requestAnimationFrame(shotLoop);
+  requestAnimationFrame(captureFrame);
 } else {
-  world.reset(loadSave());
+  world.reset(readSave());
   world.camera.x = 1420;
   world.camera.y = 620;
-  requestAnimationFrame(loop);
+  requestAnimationFrame(frame);
 }

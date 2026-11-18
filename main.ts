@@ -1,44 +1,44 @@
-// Coral Bay Heat — a gta6-01 entry (Node 22, standard library only). The game is this
-// directory's game/ folder: plain static files a desktop browser loads offline
-// (game/index.html and its ES modules, no library and no network request). It is a top-down
-// open-world crime game set in Coral Bay, an original sun-soaked coastal city: a road grid
-// with traffic and pedestrians, cars to steal, a three-mission story for Vera of Vera's
-// Customs, a five-star wanted system with pursuing police, shops, pickups and a minimap HUD,
-// plus taxi fares — passengers hail a cab, pay by the trip, and lose patience on a clock —
-// and three new rides (the Stallion muscle car, the Hauler truck, the Vapor supercar).
+// Coral Bay Heat — hand-in program for the gta6-01 bounty (Node 22,
+// standard library only, no build step).
 //
-// This program hands the game in: it copies game/ and screenshots/ from beside this file to
-// /output and writes /output/dossier.json, the summary the judge reads, with the vendored
-// make.fun library. Run it twice and the output is byte-identical.
+// What is being handed in: the game/ folder beside this file — a top-down
+// open-world crime game in plain static files (one HTML page plus ES
+// modules, no libraries, nothing fetched from the network). It is set in
+// Coral Bay, an original coastal city with a street grid, traffic and
+// crowds, cars to steal across nine classes, Vera's three-mission story,
+// repeatable courier work, taxi fares with hailing passengers and a
+// patience clock, a five-star wanted system with pursuing police, shops,
+// pickups, a minimap HUD and localStorage saves.
 //
-// Serve the game locally with `node serve.ts`, then open http://localhost:8080.
-// Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
-//   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
+// What this program does: copy game/ and screenshots/ into the output
+// directory (MAKEFUN_OUTPUT_DIR, defaulting to /output) and write
+// dossier.json there with the vendored make.fun library, passing the
+// scorer's caps so an entry the scorer would refuse fails here first.
+// The output is a pure function of the inputs: run it twice, get
+// byte-identical results.
+//
+// Play it locally instead with: node serve.ts  →  http://localhost:8080
 
 import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
-const here = fileURLToPath(new URL('.', import.meta.url));
-const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+const entryDir = fileURLToPath(new URL('.', import.meta.url));
+const outputDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
-mkdirSync(out, { recursive: true });
-cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
-mkdirSync(join(out, 'screenshots'), { recursive: true });
-if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
+mkdirSync(outputDir, { recursive: true });
+cpSync(join(entryDir, 'game'), join(outputDir, 'game'), { recursive: true });
+mkdirSync(join(outputDir, 'screenshots'), { recursive: true });
+if (existsSync(join(entryDir, 'screenshots'))) {
+  cpSync(join(entryDir, 'screenshots'), join(outputDir, 'screenshots'), { recursive: true });
+}
 
-// The scorer's own caps (reference/gate.json): only text_max_bytes shapes the bytes; the others refuse an entry the
-// scorer would refuse (more than 4 screenshots or one over 256 KiB; more than 993 files in game/ or 48 MiB of game
-// files, in all, or a path under game/ over 1000 bytes: game/ counts beside /output's own 1000-entry cap, its
-// screenshots/ and dossier.json).
-writeFileSync(
-  join(out, 'dossier.json'),
-  buildDossier(out, {
-    text_max_bytes: 163840,
-    screenshots: { max: 4, max_bytes: 262144 },
-    game_max_files: 993,
-    game_max_bytes: 50331648,
-    game_path_max_bytes: 1000,
-  }),
-);
+const dossierCaps = {
+  text_max_bytes: 163840,
+  screenshots: { max: 4, max_bytes: 262144 },
+  game_max_files: 993,
+  game_max_bytes: 50331648,
+  game_path_max_bytes: 1000,
+};
+writeFileSync(join(outputDir, 'dossier.json'), buildDossier(outputDir, dossierCaps));
